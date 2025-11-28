@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Build a Tiny Town - Isometric City Builder</title>
+  <!-- Three.js from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.min.js"></script>
+  <style>
+    /* Soft pastel background and clean layout */
+    :root {
+      --pink: #f8c8dc;
+      --mint: #c5f4d6;
+      --sky: #c9e8ff;
+      --lavender: #d9ccff;
+      --sun: #ffe7a0;
+      --shadow: #5d6f7a;
+      font-family: 'Trebuchet MS', 'Nunito', sans-serif;
+    }
+
+    body {
+      margin: 0;
+      background: linear-gradient(180deg, var(--sky), #fefefe);
+      color: #3b3b3b;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    header {
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 26px;
+      color: #2d5f73;
+    }
+
+    p.instructions {
+      margin: 0 0 12px;
+      font-size: 16px;
+      line-height: 1.4;
+    }
+
+    #palette {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 8px;
+    }
+
+    button.tool {
+      border: 2px solid transparent;
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #2d5f73;
+      cursor: pointer;
+      transition: transform 0.1s ease, box-shadow 0.15s ease, border-color 0.1s ease;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    }
+
+    button.tool:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+    }
+
+    button.tool.active {
+      border-color: #ffb3c6;
+      box-shadow: 0 6px 16px rgba(255, 179, 198, 0.4);
+      background: linear-gradient(135deg, #fff7fb, #fef6ff);
+    }
+
+    #game {
+      position: relative;
+      flex: 1;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    #reset {
+      margin-top: 8px;
+      padding: 10px 12px;
+      font-size: 14px;
+      border: none;
+      background: #ffcf6f;
+      color: #3b3b3b;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 700;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    }
+
+    #reset:hover {
+      background: #ffd98f;
+    }
+
+    footer {
+      text-align: center;
+      padding: 10px;
+      font-size: 13px;
+      color: #5d6f7a;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Build a Tiny Town</h1>
+    <p class="instructions">1) Pick a building. 2) Click on the land to place it. 3) Build your happy city!</p>
+    <div id="palette"></div>
+    <button id="reset">Reset City</button>
+  </header>
+  <div id="game"></div>
+  <footer>Made for curious builders. No timers, no scores &mdash; just imagination.</footer>
+
+  <script>
+    // ----- Basic setup -----
+    let scene, camera, renderer, raycaster, mouse;
+    let worldGroup;
+    const gridSize = 20; // 20x20 tiles
+    const tileSize = 1;
+    const grid = [];
+    const tileMeshes = [];
+    let selectedTool = 'house';
+
+    // List of tools: tile painters and buildings.
+    const tools = [
+      { id: 'grass', label: 'Grass Tile', type: 'tile' },
+      { id: 'road', label: 'Road Tile', type: 'tile' },
+      { id: 'water', label: 'Pond (Water)', type: 'tile' },
+      { id: 'house', label: 'House', type: 'building' },
+      { id: 'school', label: 'School', type: 'building' },
+      { id: 'skyscraper', label: 'Skyscraper', type: 'building' },
+      { id: 'fire', label: 'Fire Department', type: 'building' },
+      { id: 'police', label: 'Police Department', type: 'building' },
+      { id: 'townhall', label: 'Town Hall', type: 'building' },
+      { id: 'park', label: 'Park', type: 'building' },
+      { id: 'playground', label: 'Playground', type: 'building' },
+      { id: 'mall', label: 'Mall', type: 'building' },
+      { id: 'pizza', label: 'Pizza Shop', type: 'building' },
+      { id: 'restaurant', label: 'Restaurant', type: 'building' },
+      { id: 'library', label: 'Library', type: 'building' },
+      { id: 'salon', label: 'Salon', type: 'building' },
+      { id: 'cafe', label: 'Café', type: 'building' },
+      { id: 'shop', label: 'Small Shop', type: 'building' },
+      { id: 'trees', label: 'Tree Cluster', type: 'building' },
+    ];
+
+    // Colors for tile types (pastel palette).
+    const tileColors = {
+      grass: '#c5f4d6',
+      road: '#d9d9e3',
+      water: '#b9e6ff',
+    };
+
+    initScene();
+    createGrid();
+    buildPalette();
+    animate();
+
+    // ----- Scene and grid creation -----
+    function initScene() {
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color('#f4f7ff');
+
+      const aspect = window.innerWidth / window.innerHeight;
+      // Perspective camera with an angled isometric feel.
+      camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 1000);
+      camera.position.set(25, 25, 25);
+      camera.lookAt(0, 0, 0);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.getElementById('game').appendChild(renderer.domElement);
+
+      raycaster = new THREE.Raycaster();
+      mouse = new THREE.Vector2();
+
+      // Gentle lighting for soft pastel look.
+      const ambient = new THREE.AmbientLight('#f3f3ff', 0.8);
+      scene.add(ambient);
+
+      const dirLight = new THREE.DirectionalLight('#ffffff', 0.7);
+      dirLight.position.set(10, 20, 10);
+      scene.add(dirLight);
+
+      // Group rotated for an isometric style.
+      worldGroup = new THREE.Group();
+      worldGroup.rotation.y = Math.PI / 4;
+      scene.add(worldGroup);
+
+      window.addEventListener('resize', onWindowResize);
+      renderer.domElement.addEventListener('click', onMouseClick);
+    }
+
+    // Create the grid tiles with default grass.
+    function createGrid() {
+      const offset = (gridSize * tileSize) / 2;
+      const tileGeometry = new THREE.BoxGeometry(tileSize - 0.04, 0.1, tileSize - 0.04);
+      for (let x = 0; x < gridSize; x++) {
+        grid[x] = [];
+        for (let z = 0; z < gridSize; z++) {
+          const tileMesh = createTileMesh(tileGeometry, tileColors.grass);
+          tileMesh.position.set((x * tileSize) - offset, 0, (z * tileSize) - offset);
+          tileMesh.userData = { x, z };
+          worldGroup.add(tileMesh);
+          grid[x][z] = { type: 'grass', mesh: tileMesh, building: null };
+          tileMeshes.push(tileMesh);
+        }
+      }
+    }
+
+    // Helper to make a single tile mesh with soft edges.
+    function createTileMesh(geometry, color) {
+      const material = new THREE.MeshLambertMaterial({ color });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.castShadow = false;
+      mesh.receiveShadow = true;
+      return mesh;
+    }
+
+    // ----- Palette UI -----
+    function buildPalette() {
+      const palette = document.getElementById('palette');
+      tools.forEach(tool => {
+        const btn = document.createElement('button');
+        btn.className = 'tool';
+        btn.textContent = tool.label;
+        btn.dataset.id = tool.id;
+        btn.addEventListener('click', () => selectTool(tool.id));
+        palette.appendChild(btn);
+      });
+      selectTool(selectedTool);
+
+      document.getElementById('reset').addEventListener('click', resetCity);
+    }
+
+    function selectTool(id) {
+      selectedTool = id;
+      document.querySelectorAll('button.tool').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.id === id);
+      });
+    }
+
+    // ----- Interaction -----
+    function onMouseClick(event) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(tileMeshes);
+      if (intersects.length === 0) return;
+
+      const tile = intersects[0].object;
+      const { x, z } = tile.userData;
+      const tool = tools.find(t => t.id === selectedTool);
+      if (!tool) return;
+
+      if (tool.type === 'tile') {
+        paintTile(x, z, tool.id);
+      } else {
+        placeBuilding(x, z, tool.id);
+      }
+    }
+
+    // Paint a tile type (grass/road/water) and remove any building.
+    function paintTile(x, z, type) {
+      const tileData = grid[x][z];
+      tileData.type = type;
+      tileData.mesh.material.color.set(tileColors[type]);
+      // If a building existed, remove it so tiles and buildings stay tidy.
+      if (tileData.building) {
+        worldGroup.remove(tileData.building);
+        tileData.building = null;
+      }
+    }
+
+    // Place or replace a building on a tile.
+    function placeBuilding(x, z, buildingType) {
+      const tileData = grid[x][z];
+      // Gentle rule: building replaces whatever was there previously.
+      if (tileData.building) {
+        worldGroup.remove(tileData.building);
+        tileData.building = null;
+      }
+      // If we try to build on water, quietly turn it to grass first.
+      if (tileData.type === 'water') {
+        paintTile(x, z, 'grass');
+      }
+      const mesh = createBuildingMesh(buildingType);
+      if (!mesh) return;
+      mesh.position.set(tileData.mesh.position.x, tileData.mesh.position.y + 0.05, tileData.mesh.position.z);
+      worldGroup.add(mesh);
+      tileData.building = mesh;
+    }
+
+    // ----- Building factory -----
+    function createBuildingMesh(type) {
+      const group = new THREE.Group();
+      const pastel = {
+        red: '#ff9aa2',
+        orange: '#ffd3b6',
+        yellow: '#fff2a0',
+        green: '#a8f0c6',
+        blue: '#a7d8ff',
+        purple: '#d8c7ff',
+        lavender: '#e7ddff',
+        pink: '#f7b2d9',
+        teal: '#9fe3e0',
+        gray: '#d3d7e3',
+        brown: '#caa882',
+        sun: '#ffe7a0',
+      };
+
+      const addBox = (w, h, d, color, y = h / 2) => {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshLambertMaterial({ color }));
+        mesh.position.y = y;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        group.add(mesh);
+        return mesh;
+      };
+
+      const addCylinder = (rTop, rBottom, h, color, y = h / 2) => {
+        const mesh = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBottom, h, 12), new THREE.MeshLambertMaterial({ color }));
+        mesh.position.y = y;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        group.add(mesh);
+        return mesh;
+      };
+
+      switch (type) {
+        case 'house': {
+          addBox(0.6, 0.35, 0.6, pastel.pink);
+          addBox(0.7, 0.2, 0.7, pastel.red, 0.55);
+          break;
+        }
+        case 'school': {
+          addBox(0.9, 0.35, 0.7, pastel.yellow);
+          addBox(0.4, 0.2, 0.2, pastel.orange, 0.45);
+          addBox(0.25, 0.1, 0.25, pastel.red, 0.6);
+          break;
+        }
+        case 'skyscraper': {
+          addBox(0.5, 1.4, 0.5, pastel.blue);
+          addBox(0.55, 0.2, 0.55, pastel.gray, 1.5);
+          addBox(0.35, 0.3, 0.35, pastel.purple, 1.7);
+          break;
+        }
+        case 'fire': {
+          addBox(0.8, 0.45, 0.6, pastel.red);
+          addBox(0.3, 0.2, 0.3, pastel.yellow, 0.55).position.x = 0.25;
+          break;
+        }
+        case 'police': {
+          addBox(0.8, 0.4, 0.6, pastel.blue);
+          addBox(0.3, 0.15, 0.3, pastel.gray, 0.5).position.x = -0.25;
+          break;
+        }
+        case 'townhall': {
+          addBox(0.9, 0.45, 0.7, pastel.teal);
+          addBox(0.5, 0.2, 0.5, pastel.yellow, 0.55);
+          addCylinder(0.1, 0.1, 0.4, pastel.orange, 0.75);
+          break;
+        }
+        case 'park': {
+          addBox(0.95, 0.08, 0.95, pastel.green, 0.04);
+          addCylinder(0.05, 0.06, 0.3, pastel.brown, 0.15).position.x = -0.25;
+          addBox(0.2, 0.18, 0.2, pastel.teal, 0.45).position.x = -0.25;
+          addCylinder(0.05, 0.06, 0.3, pastel.brown, 0.15).position.x = 0.25;
+          addBox(0.2, 0.18, 0.2, pastel.teal, 0.45).position.x = 0.25;
+          break;
+        }
+        case 'playground': {
+          addBox(0.95, 0.08, 0.95, pastel.sun || pastel.yellow, 0.04);
+          addBox(0.2, 0.2, 0.6, pastel.orange, 0.2).position.x = -0.25;
+          addCylinder(0.04, 0.04, 0.25, pastel.red, 0.12).position.set(0.2, 0.12, 0.2);
+          addCylinder(0.04, 0.04, 0.25, pastel.red, 0.12).position.set(0.2, 0.12, -0.2);
+          addBox(0.25, 0.05, 0.25, pastel.pink, 0.25).position.x = 0.2;
+          break;
+        }
+        case 'mall': {
+          addBox(1, 0.35, 0.9, pastel.purple);
+          addBox(0.9, 0.2, 0.8, pastel.gray, 0.45);
+          addBox(0.3, 0.1, 0.6, pastel.blue, 0.52).position.x = -0.25;
+          break;
+        }
+        case 'pizza': {
+          addBox(0.6, 0.3, 0.6, pastel.orange);
+          addBox(0.4, 0.2, 0.4, pastel.red, 0.45);
+          addCylinder(0.08, 0.08, 0.2, pastel.yellow, 0.55);
+          break;
+        }
+        case 'restaurant': {
+          addBox(0.8, 0.35, 0.6, pastel.pink);
+          addBox(0.4, 0.15, 0.8, pastel.orange, 0.45);
+          addBox(0.25, 0.1, 0.25, pastel.yellow, 0.55).position.x = 0.2;
+          break;
+        }
+        case 'library': {
+          addBox(0.85, 0.4, 0.6, pastel.teal);
+          addBox(0.3, 0.15, 0.4, pastel.gray, 0.5).position.x = -0.25;
+          addBox(0.2, 0.2, 0.2, pastel.purple, 0.55).position.x = 0.25;
+          break;
+        }
+        case 'salon': {
+          addBox(0.7, 0.35, 0.7, pastel.lavender || pastel.purple);
+          addBox(0.6, 0.12, 0.6, pastel.pink, 0.45);
+          break;
+        }
+        case 'cafe': {
+          addBox(0.6, 0.3, 0.6, pastel.brown);
+          addBox(0.7, 0.15, 0.2, pastel.orange, 0.45);
+          addCylinder(0.06, 0.06, 0.15, pastel.yellow, 0.52).position.x = -0.15;
+          break;
+        }
+        case 'shop': {
+          addBox(0.6, 0.3, 0.6, pastel.green);
+          addBox(0.6, 0.12, 0.2, pastel.blue, 0.42);
+          break;
+        }
+        case 'trees': {
+          addBox(0.95, 0.08, 0.95, pastel.green, 0.04);
+          [-0.25, 0, 0.25].forEach(offset => {
+            addCylinder(0.05, 0.05, 0.25, pastel.brown, 0.12).position.x = offset;
+            addBox(0.25, 0.2, 0.25, pastel.teal, 0.35).position.x = offset;
+          });
+          break;
+        }
+        default:
+          return null;
+      }
+
+      return group;
+    }
+
+    // ----- Utility and loop -----
+    function resetCity() {
+      // Remove all buildings.
+      grid.flat().forEach(cell => {
+        if (cell.building) {
+          worldGroup.remove(cell.building);
+          cell.building = null;
+        }
+        cell.type = 'grass';
+        cell.mesh.material.color.set(tileColors.grass);
+      });
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      // Very gentle sky color shift for coziness.
+      const t = Date.now() * 0.00005;
+      const hue = (Math.sin(t) + 1) / 2 * 0.1 + 0.55;
+      scene.background.setHSL(hue, 0.6, 0.9);
+      renderer.render(scene, camera);
+    }
+  </script>
+</body>
+</html>
